@@ -1,8 +1,14 @@
 import requests
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
 from datetime import datetime
 from typing import Dict, List, Tuple
+
+# Set style for better-looking plots
+plt.style.use('seaborn-v0_8-darkgrid')
+sns.set_palette("husl")
 
 class TransferValueAnalyzer:
     def __init__(self):
@@ -108,8 +114,8 @@ class TransferValueAnalyzer:
             'FWD': {'goals': 1.0, 'assists': 0.7, 'shots': 0.5, 'xg': 0.8}
         }
         
-        # Calculate composite performance score
-        self.players_df['performance_score'] = 0
+        # Initialize performance score as float
+        self.players_df['performance_score'] = 0.0
         
         for pos in ['GKP', 'DEF', 'MID', 'FWD']:
             mask = self.players_df['position'] == pos
@@ -118,25 +124,25 @@ class TransferValueAnalyzer:
                 self.players_df.loc[mask, 'performance_score'] = (
                     self.players_df.loc[mask, 'clean_sheets'] * 10 +
                     self.players_df.loc[mask, 'saves'] * 0.5
-                )
+                ).astype(float)
             elif pos == 'DEF':
                 self.players_df.loc[mask, 'performance_score'] = (
                     self.players_df.loc[mask, 'clean_sheets'] * 5 +
                     self.players_df.loc[mask, 'goals'] * 15 +
                     self.players_df.loc[mask, 'assists'] * 10
-                )
+                ).astype(float)
             elif pos == 'MID':
                 self.players_df.loc[mask, 'performance_score'] = (
                     self.players_df.loc[mask, 'goals'] * 12 +
                     self.players_df.loc[mask, 'assists'] * 10 +
                     self.players_df.loc[mask, 'creativity'].astype(float) * 0.5
-                )
+                ).astype(float)
             else:  # FWD
                 self.players_df.loc[mask, 'performance_score'] = (
                     self.players_df.loc[mask, 'goals'] * 10 +
                     self.players_df.loc[mask, 'assists'] * 8 +
                     self.players_df.loc[mask, 'expected_goals'].astype(float) * 5
-                )
+                ).astype(float)
                 
     def estimate_market_value(self):
         """Estimate real-world market value based on performance metrics"""
@@ -154,6 +160,10 @@ class TransferValueAnalyzer:
         
     def _calculate_player_value(self, player, base_values):
         """Calculate individual player market value"""
+        # Handle missing position
+        if pd.isna(player['position']) or player['position'] not in base_values:
+            return 10.0  # Default value for players with missing position
+            
         base = base_values[player['position']]
         
         # Performance multiplier
@@ -168,7 +178,242 @@ class TransferValueAnalyzer:
         # Calculate estimated value
         value = base * perf_multiplier * playing_multiplier * form_multiplier
         
-        return round(value, 1)
+    def visualize_top_performers(self, top_n: int = 10):
+        """Create visualizations for top performers"""
+        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+        fig.suptitle('Top Performers Analysis', fontsize=16)
+        
+        # Filter players with significant playing time
+        active_players = self.players_df[self.players_df['minutes_played'] >= 900]
+        
+        # 1. Top scorers
+        ax1 = axes[0, 0]
+        top_scorers = active_players.nlargest(top_n, 'goals')
+        ax1.barh(top_scorers['web_name'], top_scorers['goals'])
+        ax1.set_xlabel('Goals')
+        ax1.set_title(f'Top {top_n} Goal Scorers')
+        ax1.invert_yaxis()
+        
+        # 2. Top assisters
+        ax2 = axes[0, 1]
+        top_assisters = active_players.nlargest(top_n, 'assists')
+        ax2.barh(top_assisters['web_name'], top_assisters['assists'], color='orange')
+        ax2.set_xlabel('Assists')
+        ax2.set_title(f'Top {top_n} Assist Providers')
+        ax2.invert_yaxis()
+        
+        # 3. Goals vs Assists scatter
+        ax3 = axes[1, 0]
+        for pos, color in zip(['FWD', 'MID', 'DEF', 'GKP'], ['red', 'blue', 'green', 'purple']):
+            pos_data = active_players[active_players['position'] == pos]
+            ax3.scatter(pos_data['goals'], pos_data['assists'], 
+                       alpha=0.6, label=pos, color=color, s=60)
+        ax3.set_xlabel('Goals')
+        ax3.set_ylabel('Assists')
+        ax3.set_title('Goals vs Assists by Position')
+        ax3.legend()
+        ax3.grid(True, alpha=0.3)
+        
+        # 4. Performance score by position
+        ax4 = axes[1, 1]
+        position_performance = active_players.groupby('position')['performance_score'].mean().sort_values()
+        ax4.bar(position_performance.index, position_performance.values)
+        ax4.set_xlabel('Position')
+        ax4.set_ylabel('Average Performance Score')
+        ax4.set_title('Average Performance Score by Position')
+        
+        plt.tight_layout()
+        plt.show()
+        
+    def visualize_value_analysis(self, top_n: int = 15):
+        """Visualize value analysis and undervalued players"""
+        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+        fig.suptitle('Player Value Analysis', fontsize=16)
+        
+        # Filter players
+        active_players = self.players_df[self.players_df['minutes_played'] >= 900].copy()
+        
+        # 1. Performance vs Value scatter
+        ax1 = axes[0, 0]
+        for pos, color in zip(['FWD', 'MID', 'DEF', 'GKP'], ['red', 'blue', 'green', 'purple']):
+            pos_data = active_players[active_players['position'] == pos]
+            ax1.scatter(pos_data['estimated_value_millions'], 
+                       pos_data['performance_score'],
+                       alpha=0.6, label=pos, color=color, s=60)
+        ax1.set_xlabel('Estimated Value (£M)')
+        ax1.set_ylabel('Performance Score')
+        ax1.set_title('Performance vs Market Value')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        # 2. Most undervalued players
+        ax2 = axes[0, 1]
+        undervalued = self.find_undervalued_players(top_n=top_n)
+        ax2.barh(undervalued['web_name'].head(10), 
+                undervalued['value_ratio'].head(10), 
+                color='green')
+        ax2.set_xlabel('Value Ratio (Performance/Price)')
+        ax2.set_title('Most Undervalued Players')
+        ax2.invert_yaxis()
+        
+        # 3. Goals per 90 vs Value
+        ax3 = axes[1, 0]
+        forwards_mids = active_players[active_players['position'].isin(['FWD', 'MID'])]
+        scatter = ax3.scatter(forwards_mids['estimated_value_millions'], 
+                            forwards_mids['goals_per_90'],
+                            c=forwards_mids['assists_per_90'], 
+                            cmap='viridis', s=80, alpha=0.7)
+        ax3.set_xlabel('Estimated Value (£M)')
+        ax3.set_ylabel('Goals per 90')
+        ax3.set_title('Attacking Output vs Value (color = assists/90)')
+        cbar = plt.colorbar(scatter, ax=ax3)
+        cbar.set_label('Assists per 90')
+        
+        # 4. Value distribution by position
+        ax4 = axes[1, 1]
+        active_players.boxplot(column='estimated_value_millions', by='position', ax=ax4)
+        ax4.set_xlabel('Position')
+        ax4.set_ylabel('Estimated Value (£M)')
+        ax4.set_title('Value Distribution by Position')
+        
+        plt.tight_layout()
+        plt.show()
+        
+    def visualize_player_comparison(self, player_names: List[str]):
+        """Create radar chart comparing multiple players"""
+        # Filter players
+        players_data = self.players_df[self.players_df['web_name'].isin(player_names)]
+        
+        if len(players_data) == 0:
+            print("No players found with those names")
+            return
+            
+        # Select metrics for radar chart
+        metrics = ['goals_per_90', 'assists_per_90', 'xg_per_90', 'xa_per_90', 'influence_rating']
+        
+        # Normalize metrics to 0-100 scale
+        normalized_data = {}
+        for metric in metrics:
+            max_val = self.players_df[metric].max()
+            if max_val > 0:
+                normalized_data[metric] = (players_data[metric] / max_val * 100).values
+            else:
+                normalized_data[metric] = players_data[metric].values
+                
+        # Create radar chart
+        fig = plt.figure(figsize=(10, 8))
+        ax = fig.add_subplot(111, projection='polar')
+        
+        # Number of variables
+        num_vars = len(metrics)
+        
+        # Compute angle for each axis
+        angles = [n / float(num_vars) * 2 * np.pi for n in range(num_vars)]
+        angles += angles[:1]
+        
+        # Plot each player
+        colors = ['red', 'blue', 'green', 'orange', 'purple']
+        for idx, (_, player) in enumerate(players_data.iterrows()):
+            values = [normalized_data[metric][idx] for metric in metrics]
+            values += values[:1]
+            
+            ax.plot(angles, values, 'o-', linewidth=2, 
+                   label=player['web_name'], color=colors[idx % len(colors)])
+            ax.fill(angles, values, alpha=0.25, color=colors[idx % len(colors)])
+            
+        # Set labels
+        ax.set_xticks(angles[:-1])
+        ax.set_xticklabels([m.replace('_', ' ').title() for m in metrics])
+        ax.set_ylim(0, 100)
+        
+        plt.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1))
+        plt.title('Player Comparison Radar Chart', size=16, y=1.08)
+        plt.tight_layout()
+        plt.show()
+        
+    def visualize_team_analysis(self):
+        """Visualize team-level statistics"""
+        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+        fig.suptitle('Team Analysis', fontsize=16)
+        
+        # Aggregate by team
+        team_stats = self.players_df.groupby('team_name').agg({
+            'goals': 'sum',
+            'assists': 'sum',
+            'performance_score': 'mean',
+            'estimated_value_millions': 'sum'
+        }).reset_index()
+        
+        # 1. Goals by team
+        ax1 = axes[0, 0]
+        team_stats_sorted = team_stats.sort_values('goals', ascending=True)
+        ax1.barh(team_stats_sorted['team_name'], team_stats_sorted['goals'])
+        ax1.set_xlabel('Total Goals')
+        ax1.set_title('Goals by Team')
+        
+        # 2. Squad value by team
+        ax2 = axes[0, 1]
+        team_stats_sorted = team_stats.sort_values('estimated_value_millions', ascending=True)
+        ax2.barh(team_stats_sorted['team_name'], team_stats_sorted['estimated_value_millions'])
+        ax2.set_xlabel('Total Squad Value (£M)')
+        ax2.set_title('Squad Value by Team')
+        
+        # 3. Goals vs Squad Value
+        ax3 = axes[1, 0]
+        ax3.scatter(team_stats['estimated_value_millions'], team_stats['goals'], s=100)
+        for idx, row in team_stats.iterrows():
+            ax3.annotate(row['team_name'][:3], 
+                        (row['estimated_value_millions'], row['goals']),
+                        fontsize=8, alpha=0.7)
+        ax3.set_xlabel('Squad Value (£M)')
+        ax3.set_ylabel('Total Goals')
+        ax3.set_title('Goals vs Squad Value')
+        ax3.grid(True, alpha=0.3)
+        
+        # 4. Average performance by team
+        ax4 = axes[1, 1]
+        team_perf = team_stats.sort_values('performance_score', ascending=True)
+        ax4.barh(team_perf['team_name'], team_perf['performance_score'])
+        ax4.set_xlabel('Average Performance Score')
+        ax4.set_title('Average Player Performance by Team')
+        
+        plt.tight_layout()
+        plt.show()
+        
+    def create_transfer_target_matrix(self, positions: List[str], max_value: float = 50):
+        """Create a matrix visualization of potential transfer targets"""
+        fig, ax = plt.subplots(figsize=(12, 8))
+        
+        # Get candidates
+        candidates = self.players_df[
+            (self.players_df['position'].isin(positions)) &
+            (self.players_df['minutes_played'] >= 900) &
+            (self.players_df['estimated_value_millions'] <= max_value)
+        ].copy()
+        
+        # Create pivot table
+        pivot_data = candidates.pivot_table(
+            values='performance_score',
+            index='team_name',
+            columns='position',
+            aggfunc='max',
+            fill_value=0
+        )
+        
+        # Create heatmap
+        sns.heatmap(pivot_data, 
+                   annot=True, 
+                   fmt='.1f',
+                   cmap='YlOrRd',
+                   cbar_kws={'label': 'Performance Score'},
+                   ax=ax)
+        
+        ax.set_title(f'Best Players by Team and Position (Max Value: £{max_value}M)')
+        ax.set_xlabel('Position')
+        ax.set_ylabel('Team')
+        
+        plt.tight_layout()
+        plt.show()
     
     def find_undervalued_players(self, position: str = None, min_minutes: int = 900, top_n: int = 10):
         """Find potentially undervalued players based on performance vs estimated value"""
@@ -182,7 +427,12 @@ class TransferValueAnalyzer:
             df = df[df['position'] == position]
             
         # Calculate value ratio (performance per million estimated value)
-        df['value_ratio'] = df['performance_score'] / df['estimated_value_millions']
+        # Avoid division by zero
+        df['value_ratio'] = np.where(
+            df['estimated_value_millions'] > 0,
+            df['performance_score'] / df['estimated_value_millions'],
+            0
+        )
         
         # Sort by value ratio
         df = df.sort_values('value_ratio', ascending=False)
@@ -331,6 +581,25 @@ if __name__ == "__main__":
     # Display market analysis
     analyzer.display_market_analysis()
     
+    # Create visualizations
+    print("\n\nGenerating visualizations...")
+    
+    # 1. Top performers visualization
+    analyzer.visualize_top_performers()
+    
+    # 2. Value analysis visualization
+    analyzer.visualize_value_analysis()
+    
+    # 3. Team analysis
+    analyzer.visualize_team_analysis()
+    
+    # 4. Player comparison example
+    # Compare specific players (uncomment and modify names)
+    # analyzer.visualize_player_comparison(['Salah', 'De Bruyne', 'Fernandes'])
+    
+    # 5. Transfer target matrix
+    analyzer.create_transfer_target_matrix(['MID', 'FWD'], max_value=40)
+    
     # Example: Find similar players to a specific player
     print("\n\nSIMILAR PLAYER ANALYSIS")
     print("="*60)
@@ -346,4 +615,3 @@ if __name__ == "__main__":
         target_positions=['MID', 'FWD'],
         budget=50.0  # £50m budget per player
     )
-    
