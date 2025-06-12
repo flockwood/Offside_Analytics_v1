@@ -1,1 +1,20 @@
-Testing some API implementation with soccer player data
+soccer-transfer-analyzer/
+├── config.py
+├── data_fetcher.py
+├── transfermarkt_fetcher.py
+├── performance_calculator.py
+├── value_estimator.py
+├── player_analyzer.py
+├── visualizer.py
+├── report_generator.py
+├── enhanced_transfer_analyzer.py
+├── main.py
+├── enhanced_main.py
+├── requirements.txt
+├── .env.example
+├── README.md
+└── tests/
+    ├── __init__.py
+    ├── test_data_fetcher.py
+    ├── test_performance_calculator.py
+    └── test_player_analyzer.py
